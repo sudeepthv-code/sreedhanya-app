@@ -588,28 +588,24 @@
                                             className="px-3 py-1.5 text-xs rounded-lg accent-btn">
                                             View Items
                                         </button>
-                                        {/* Download PDF — show whenever a PDF exists */}
+                                        {/* Generate / Download PDF — always visible to all roles */}
+                                        <button onClick={() => generatePdf(q.id)}
+                                            disabled={generatingPdfFor === q.id}
+                                            className="px-3 py-1.5 text-xs rounded-lg bg-indigo-500 text-white disabled:opacity-50">
+                                            {generatingPdfFor === q.id ? 'Generating...' : '📄 Generate PDF'}
+                                        </button>
                                         {q.pdf_path && (
                                             <button onClick={() => downloadPdf(`/api/quotations/${q.id}/pdf-download`, `quotation_${q.id}.pdf`, auth)}
                                                 className="px-3 py-1.5 text-xs rounded-lg bg-green-500 text-white">
                                                 ⬇ Download PDF
                                             </button>
                                         )}
-                                        {/* Draft actions — abc_staff generates PDF; both roles can mark as sent */}
+                                        {/* Draft actions — both roles can mark as sent */}
                                         {q.status === 'draft' && (
-                                            <>
-                                                {auth.user.role === 'abc_staff' && !q.pdf_path && (
-                                                    <button onClick={() => generatePdf(q.id)}
-                                                        disabled={generatingPdfFor === q.id}
-                                                        className="px-3 py-1.5 text-xs rounded-lg bg-indigo-500 text-white disabled:opacity-50">
-                                                        {generatingPdfFor === q.id ? 'Generating...' : '📄 Generate PDF'}
-                                                    </button>
-                                                )}
-                                                <button onClick={() => markSent(q.id)}
-                                                    className="px-3 py-1.5 text-xs rounded-lg bg-blue-500 text-white">
-                                                    Mark as Sent
-                                                </button>
-                                            </>
+                                            <button onClick={() => markSent(q.id)}
+                                                className="px-3 py-1.5 text-xs rounded-lg bg-blue-500 text-white">
+                                                Mark as Sent
+                                            </button>
                                         )}
                                         {/* Sent actions — both roles can record client response */}
                                         {q.status === 'sent' && (

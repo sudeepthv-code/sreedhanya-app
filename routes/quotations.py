@@ -228,7 +228,7 @@ def update_quotation_status(req):
     return 200, {'success': True}
 
 def generate_quote_pdf_handler(req):
-    require_role(req, 'abc_staff')
+    require_auth(req)
     quote_id = req['params']['id']
 
     conn = get_conn()

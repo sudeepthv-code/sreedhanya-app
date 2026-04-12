@@ -45,9 +45,10 @@ def get_apartment(req):
     """, (apt_id,)).fetchall()
 
     payments = conn.execute("""
-        SELECT pm.* FROM payment_milestones pm
+        SELECT pm.*, q.version AS quote_version, q.total_amount AS quote_net_total
+        FROM payment_milestones pm
         JOIN quotations q ON pm.quote_id = q.id
-        WHERE q.apartment_id = ? ORDER BY pm.quote_id DESC, pm.id
+        WHERE q.apartment_id = ? ORDER BY q.version ASC, pm.id
     """, (apt_id,)).fetchall()
 
     stages = conn.execute("""

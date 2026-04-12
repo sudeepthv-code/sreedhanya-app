@@ -784,40 +784,64 @@
                     <h3 className="font-semibold text-gray-700 mb-4">Project Stages</h3>
                     {stages.length === 0 ? (
                         <p className="text-gray-400 text-sm">No project stages yet. Confirm a quotation first.</p>
-                    ) : (
-                        <div className="space-y-3">
-                            {stages.map((s, idx) => (
-                                <div key={s.id} className="bg-gray-50 rounded-lg p-4 border-l-4" style={{ borderLeftColor: 'var(--accent)' }}>
-                                    <div className="flex justify-between items-start mb-1">
-                                        <div>
-                                            <p className="font-semibold text-gray-800">
-                                                {statusIcon[s.status] || ''} {s.stage_number}. {s.stage_name}
-                                            </p>
-                                            {s.notes && <p className="text-xs text-gray-500 mt-1">{s.notes}</p>}
-                                            {s.completed_at && <p className="text-xs text-gray-400">Completed: {new Date(s.completed_at).toLocaleDateString('en-IN')}</p>}
+                    ) : (() => {
+                        // Group stages by quote version
+                        const groups = stages.reduce((acc, s) => {
+                            const v = s.quote_version;
+                            if (!acc[v]) acc[v] = [];
+                            acc[v].push(s);
+                            return acc;
+                        }, {});
+                        return (
+                            <div className="space-y-6">
+                                {Object.entries(groups).map(([version, groupStages]) => (
+                                    <div key={version}>
+                                        <div className="flex items-center gap-3 mb-3">
+                                            <span className="text-sm font-semibold text-indigo-700 bg-indigo-100 px-3 py-1 rounded-full">
+                                                Quote V{version}
+                                            </span>
+                                            <div className="flex-1 h-px bg-gray-200"></div>
+                                            <span className="text-xs text-gray-400">
+                                                {groupStages.filter(s => s.status === 'completed').length}/{groupStages.length} completed
+                                            </span>
                                         </div>
-                                        <StatusBadge status={s.status} />
+                                        <div className="space-y-3">
+                                            {groupStages.map(s => (
+                                                <div key={s.id} className="bg-gray-50 rounded-lg p-4 border-l-4" style={{ borderLeftColor: 'var(--accent)' }}>
+                                                    <div className="flex justify-between items-start mb-1">
+                                                        <div>
+                                                            <p className="font-semibold text-gray-800">
+                                                                {statusIcon[s.status] || ''} {s.stage_number}. {s.stage_name}
+                                                            </p>
+                                                            {s.notes && <p className="text-xs text-gray-500 mt-1">{s.notes}</p>}
+                                                            {s.completed_at && <p className="text-xs text-gray-400">Completed: {new Date(s.completed_at).toLocaleDateString('en-IN')}</p>}
+                                                        </div>
+                                                        <StatusBadge status={s.status} />
+                                                    </div>
+                                                    {auth.user.role === 'abc_staff' && s.status !== 'completed' && (
+                                                        <div className="flex gap-2 mt-3">
+                                                            {s.status === 'pending' && (
+                                                                <button onClick={() => updateStage(s.id, 'in_progress')}
+                                                                    className="px-3 py-1.5 text-xs rounded-lg bg-blue-500 text-white">
+                                                                    Start
+                                                                </button>
+                                                            )}
+                                                            {s.status === 'in_progress' && (
+                                                                <button onClick={() => updateStage(s.id, 'completed')}
+                                                                    className="px-3 py-1.5 text-xs rounded-lg bg-green-500 text-white">
+                                                                    Mark Complete
+                                                                </button>
+                                                            )}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            ))}
+                                        </div>
                                     </div>
-                                    {auth.user.role === 'abc_staff' && s.status !== 'completed' && (
-                                        <div className="flex gap-2 mt-3">
-                                            {s.status === 'pending' && (
-                                                <button onClick={() => updateStage(s.id, 'in_progress')}
-                                                    className="px-3 py-1.5 text-xs rounded-lg bg-blue-500 text-white">
-                                                    Start
-                                                </button>
-                                            )}
-                                            {s.status === 'in_progress' && (
-                                                <button onClick={() => updateStage(s.id, 'completed')}
-                                                    className="px-3 py-1.5 text-xs rounded-lg bg-green-500 text-white">
-                                                    Mark Complete
-                                                </button>
-                                            )}
-                                        </div>
-                                    )}
-                                </div>
-                            ))}
-                        </div>
-                    )}
+                                ))}
+                            </div>
+                        );
+                    })()}
                     {toast && <Toast {...toast} onClose={() => setToast(null)} />}
                 </div>
             );

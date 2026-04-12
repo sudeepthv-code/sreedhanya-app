@@ -52,9 +52,9 @@ def get_apartment(req):
     """, (apt_id,)).fetchall()
 
     stages = conn.execute("""
-        SELECT ps.* FROM project_stages ps
+        SELECT ps.*, q.version AS quote_version FROM project_stages ps
         JOIN quotations q ON ps.quote_id = q.id
-        WHERE q.apartment_id = ? ORDER BY ps.quote_id DESC, ps.stage_number
+        WHERE q.apartment_id = ? ORDER BY q.version ASC, ps.stage_number
     """, (apt_id,)).fetchall()
 
     invoices = conn.execute("""

@@ -595,10 +595,10 @@
                                                 ⬇ Download PDF
                                             </button>
                                         )}
-                                        {/* Draft actions */}
-                                        {auth.user.role === 'abc_staff' && q.status === 'draft' && (
+                                        {/* Draft actions — abc_staff generates PDF; both roles can mark as sent */}
+                                        {q.status === 'draft' && (
                                             <>
-                                                {!q.pdf_path && (
+                                                {auth.user.role === 'abc_staff' && !q.pdf_path && (
                                                     <button onClick={() => generatePdf(q.id)}
                                                         disabled={generatingPdfFor === q.id}
                                                         className="px-3 py-1.5 text-xs rounded-lg bg-indigo-500 text-white disabled:opacity-50">
@@ -611,8 +611,8 @@
                                                 </button>
                                             </>
                                         )}
-                                        {/* Sent actions */}
-                                        {q.status === 'sent' && auth.user.role === 'abc_staff' && (
+                                        {/* Sent actions — both roles can record client response */}
+                                        {q.status === 'sent' && (
                                             <button onClick={() => { setRecordingFor(q.id); setClientResponse('confirmed'); setDropReason(''); }}
                                                 className="px-3 py-1.5 text-xs rounded-lg bg-purple-500 text-white">
                                                 Record Client Response

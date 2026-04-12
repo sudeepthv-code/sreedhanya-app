@@ -187,7 +187,7 @@ def create_quotation(req):
     return 201, {'success': True, 'id': quote_id}
 
 def update_quotation_status(req):
-    require_role(req, 'abc_staff')
+    require_auth(req)
     quote_id = req['params']['id']
     b = req['body']
 

@@ -1,0 +1,23 @@
+# Database (persisted on Railway volume, not in repo)
+*.db
+*.db-shm
+*.db-wal
+
+# Generated PDFs (persisted on Railway volume, not in repo)
+static/pdfs/*.pdf
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+.Python
+
+# Environment
+.env
+.env.*
+
+# Mac
+.DS_Store
+
+# Local launcher
+start_mac.command

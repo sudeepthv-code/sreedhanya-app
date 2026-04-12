@@ -1,0 +1,1797 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sreedhanya AI Customisation App</title>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        :root {
+            --primary: #1F5C99;
+            --accent: #3BBFBF;
+            --bg: #f0f4f8;
+        }
+        body { background-color: var(--bg); }
+        .primary-btn { background-color: var(--primary); color: white; }
+        .primary-btn:hover { opacity: 0.9; }
+        .accent-btn { background-color: var(--accent); color: white; }
+        .accent-btn:hover { opacity: 0.9; }
+        .nav-active { background-color: rgba(255,255,255,0.2); }
+        .nav-btn { background-color: transparent; }
+        .nav-btn:hover { background-color: rgba(255,255,255,0.1); }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useContext, createContext, useCallback } = React;
+
+        // ============= CONTEXT =============
+        const AuthContext = createContext();
+
+        const AuthProvider = ({ children }) => {
+            const [auth, setAuth] = useState(null);
+            const [loading, setLoading] = useState(true);
+
+            useEffect(() => {
+                const stored = sessionStorage.getItem('auth');
+                if (stored) {
+                    try { setAuth(JSON.parse(stored)); } catch {}
+                }
+                setLoading(false);
+            }, []);
+
+            const login = async (email, password) => {
+                const res = await fetch('/api/auth/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email, password })
+                });
+                if (!res.ok) throw new Error((await res.json()).error || 'Login failed');
+                const data = await res.json();
+                setAuth(data);
+                sessionStorage.setItem('auth', JSON.stringify(data));
+                return data;
+            };
+
+            const logout = () => {
+                setAuth(null);
+                sessionStorage.removeItem('auth');
+            };
+
+            return (
+                <AuthContext.Provider value={{ auth, loading, login, logout }}>
+                    {children}
+                </AuthContext.Provider>
+            );
+        };
+
+        const useAuth = () => useContext(AuthContext);
+
+        // ============= API HELPER =============
+        const api = async (method, endpoint, body = null, auth = null) => {
+            const opts = {
+                method,
+                headers: {
+                    'Content-Type': 'application/json',
+                    ...(auth && { 'Authorization': `Bearer ${auth.token}` })
+                }
+            };
+            if (body) opts.body = JSON.stringify(body);
+            const res = await fetch(endpoint, opts);
+            if (!res.ok) {
+                let msg = `HTTP ${res.status}`;
+                try { msg = (await res.json()).error || msg; } catch {}
+                throw new Error(msg);
+            }
+            try { return await res.json(); } catch { return null; }
+        };
+
+        const downloadPdf = async (url, filename, auth) => {
+            try {
+                const res = await fetch(url, { headers: { 'Authorization': `Bearer ${auth.token}` } });
+                if (!res.ok) throw new Error('Download failed');
+                const blob = await res.blob();
+                const blobUrl = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = blobUrl;
+                a.download = filename;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(blobUrl);
+            } catch (err) {
+                alert('PDF download failed. Please try again.');
+            }
+        };
+
+        // ============= UTILITIES =============
+        const statusColors = {
+            no_request: 'bg-gray-100 text-gray-600',
+            pending_review: 'bg-yellow-100 text-yellow-700',
+            viable: 'bg-green-100 text-green-700',
+            not_viable: 'bg-red-100 text-red-700',
+            quoted: 'bg-orange-100 text-orange-700',
+            confirmed: 'bg-blue-100 text-blue-700',
+            dropped: 'bg-gray-200 text-gray-500',
+            in_progress: 'bg-blue-100 text-blue-700',
+            completed: 'bg-green-100 text-green-700',
+            sent: 'bg-purple-100 text-purple-700',
+            draft: 'bg-gray-100 text-gray-600',
+            pending: 'bg-yellow-100 text-yellow-700',
+            received: 'bg-green-100 text-green-700',
+            overdue: 'bg-red-100 text-red-700',
+        };
+
+        const StatusBadge = ({ status }) => {
+            const colorClass = statusColors[status] || 'bg-gray-100 text-gray-600';
+            const label = (status || '').replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+            return <span className={`px-2 py-1 rounded-full text-xs font-semibold ${colorClass}`}>{label}</span>;
+        };
+
+        const Toast = ({ message, type = 'success', onClose }) => {
+            useEffect(() => {
+                const t = setTimeout(onClose, 3000);
+                return () => clearTimeout(t);
+            }, []);
+            const bg = type === 'error' ? 'bg-red-500' : 'bg-green-500';
+            return (
+                <div className={`fixed bottom-4 right-4 ${bg} text-white px-5 py-3 rounded-lg shadow-lg z-50`}>
+                    {message}
+                </div>
+            );
+        };
+
+        const Modal = ({ isOpen, onClose, title, children, wide = false }) => {
+            if (!isOpen) return null;
+            const maxW = wide ? 'max-w-5xl' : 'max-w-2xl';
+            return (
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+                    <div className={`bg-white rounded-xl shadow-2xl ${maxW} w-full max-h-[90vh] overflow-y-auto`}>
+                        <div className="flex justify-between items-center p-6 border-b sticky top-0 bg-white z-10">
+                            <h2 className="text-xl font-bold text-gray-800">{title}</h2>
+                            <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-3xl leading-none font-light">×</button>
+                        </div>
+                        <div className="p-6">{children}</div>
+                    </div>
+                </div>
+            );
+        };
+
+        // ============= LOGIN =============
+        const LoginPage = () => {
+            const { login } = useAuth();
+            const [email, setEmail] = useState('');
+            const [password, setPassword] = useState('');
+            const [error, setError] = useState('');
+            const [loading, setLoading] = useState(false);
+
+            const handleSubmit = async (e) => {
+                e.preventDefault();
+                setError('');
+                setLoading(true);
+                try { await login(email, password); }
+                catch (err) { setError(err.message); }
+                finally { setLoading(false); }
+            };
+
+            return (
+                <div className="flex items-center justify-center min-h-screen" style={{ backgroundColor: 'var(--bg)' }}>
+                    <div className="bg-white rounded-xl shadow-xl p-10 w-full max-w-md">
+                        <div className="text-center mb-8">
+                            <h1 className="text-3xl font-bold mb-1" style={{ color: 'var(--primary)' }}>Sreedhanya AI</h1>
+                            <p className="text-gray-500">Customisation Management</p>
+                        </div>
+                        <form onSubmit={handleSubmit} className="space-y-4">
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+                                <input type="email" value={email} onChange={e => setEmail(e.target.value)}
+                                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-300"
+                                    required autoFocus />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
+                                <input type="password" value={password} onChange={e => setPassword(e.target.value)}
+                                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-300"
+                                    required />
+                            </div>
+                            {error && <div className="p-3 bg-red-50 text-red-600 rounded-lg text-sm">{error}</div>}
+                            <button type="submit" disabled={loading}
+                                className="w-full py-3 rounded-lg font-semibold primary-btn disabled:opacity-50 transition">
+                                {loading ? 'Signing in...' : 'Sign In'}
+                            </button>
+                        </form>
+                    </div>
+                </div>
+            );
+        };
+
+        // ============= SIDEBAR =============
+        const Sidebar = ({ auth, currentPage, onNavigate, onLogout }) => {
+            const isAbc = auth.user.role === 'abc_staff';
+            const navItems = [
+                { key: 'dashboard', label: 'Dashboard', icon: '🏠', always: true },
+                { key: 'viability', label: 'Viability Queue', icon: '🔍', abcOnly: true },
+                { key: 'catalogue', label: 'Catalogue', icon: '📋', abcOnly: true },
+                { key: 'users', label: 'Users', icon: '👥', abcOnly: true },
+            ];
+
+            return (
+                <div className="w-60 min-h-screen text-white flex flex-col flex-shrink-0" style={{ backgroundColor: 'var(--primary)' }}>
+                    <div className="p-6 border-b border-white border-opacity-20">
+                        <h1 className="text-xl font-bold leading-tight">Sreedhanya AI</h1>
+                        <p className="text-xs opacity-70 mt-1">Customisation App</p>
+                    </div>
+                    <nav className="flex-1 p-4 space-y-1">
+                        {navItems.map(item => {
+                            if (item.abcOnly && !isAbc) return null;
+                            const isActive = currentPage === item.key;
+                            return (
+                                <button key={item.key} onClick={() => onNavigate(item.key)}
+                                    className={`w-full text-left px-4 py-2.5 rounded-lg transition text-sm font-medium flex items-center gap-2 ${isActive ? 'nav-active' : 'nav-btn'}`}>
+                                    <span>{item.icon}</span> {item.label}
+                                </button>
+                            );
+                        })}
+                    </nav>
+                    <div className="p-4 border-t border-white border-opacity-20">
+                        <p className="text-sm font-semibold truncate">{auth.user.name}</p>
+                        <p className="text-xs opacity-60 mb-3">{auth.user.role === 'abc_staff' ? 'A+BC Staff' : 'Sreedhanya Staff'}</p>
+                        <button onClick={onLogout}
+                            className="w-full px-4 py-2 rounded-lg bg-red-500 hover:bg-red-600 transition text-sm font-medium">
+                            Logout
+                        </button>
+                    </div>
+                </div>
+            );
+        };
+
+        // ============= APARTMENT CARD =============
+        const ApartmentCard = ({ apt, onClick }) => {
+            const hasOverdue = apt.overdue_payments > 0;
+            const hasPending = apt.pending_review_count > 0;
+            return (
+                <div onClick={onClick}
+                    className="bg-white rounded-xl shadow hover:shadow-lg cursor-pointer transition p-4 border-l-4 relative"
+                    style={{ borderLeftColor: 'var(--accent)' }}>
+                    {hasOverdue && <span className="absolute top-2 right-2 text-lg" title="Overdue payments">⚠️</span>}
+                    <h3 className="text-xl font-bold text-gray-800 mb-1">{apt.apartment_number}</h3>
+                    <p className="text-xs text-gray-500 mb-2">{apt.bedroom_type} · Block {apt.block} · Floor {apt.floor}</p>
+                    <StatusBadge status={apt.status} />
+                    {hasPending && (
+                        <div className="mt-2">
+                            <span className="text-xs bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded-full">
+                                {apt.pending_review_count} pending
+                            </span>
+                        </div>
+                    )}
+                    {apt.owner_name && (
+                        <p className="text-xs text-gray-400 mt-2 truncate">{apt.owner_name}</p>
+                    )}
+                </div>
+            );
+        };
+
+        // ============= APARTMENT DETAIL MODAL =============
+        const ApartmentDetailModal = ({ isOpen, apartmentId, onClose, auth }) => {
+            const [apt, setApt] = useState(null);
+            const [loading, setLoading] = useState(false);
+            const [activeTab, setActiveTab] = useState('requests');
+            const [toast, setToast] = useState(null);
+            const [refresh, setRefresh] = useState(0);
+            const [editingOwner, setEditingOwner] = useState(false);
+            const [ownerForm, setOwnerForm] = useState({ owner_name: '', owner_phone: '', owner_email: '' });
+
+            useEffect(() => {
+                if (isOpen && apartmentId) { loadApt(); }
+            }, [isOpen, apartmentId, refresh]);
+
+            const loadApt = async () => {
+                setLoading(true);
+                try {
+                    const data = await api('GET', `/api/apartments/${apartmentId}`, null, auth);
+                    setApt(data);
+                    setOwnerForm({
+                        owner_name: data.owner_name || '',
+                        owner_phone: data.owner_phone || '',
+                        owner_email: data.owner_email || '',
+                    });
+                } catch (err) {
+                    setToast({ message: 'Failed to load apartment', type: 'error' });
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            const saveOwner = async () => {
+                try {
+                    await api('PUT', `/api/apartments/${apartmentId}`, ownerForm, auth);
+                    setEditingOwner(false);
+                    setToast({ message: 'Owner info updated' });
+                    setRefresh(r => r + 1);
+                } catch (err) {
+                    setToast({ message: err.message, type: 'error' });
+                }
+            };
+
+            const doRefresh = () => setRefresh(r => r + 1);
+
+            if (!isOpen) return null;
+
+            return (
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-start justify-center z-50 p-4 overflow-y-auto">
+                    <div className="bg-white rounded-xl shadow-2xl w-full max-w-4xl my-8">
+                        {/* Header */}
+                        <div className="flex justify-between items-start p-6 border-b sticky top-0 bg-white z-10 rounded-t-xl">
+                            <div>
+                                {apt && <>
+                                    <h2 className="text-2xl font-bold text-gray-800">{apt.apartment_number}</h2>
+                                    <p className="text-sm text-gray-500">{apt.bedroom_type} · Block {apt.block} · Floor {apt.floor}</p>
+                                </>}
+                                {loading && <p className="text-gray-500">Loading...</p>}
+                            </div>
+                            <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-3xl leading-none font-light ml-4">×</button>
+                        </div>
+
+                        {apt && (
+                            <div className="p-6">
+                                {/* Owner Info */}
+                                <div className="bg-gray-50 rounded-lg p-4 mb-6">
+                                    <div className="flex justify-between items-start">
+                                        <h3 className="font-semibold text-gray-700 mb-2">Owner Information</h3>
+                                        {!editingOwner && (
+                                            <button onClick={() => setEditingOwner(true)}
+                                                className="text-sm text-blue-500 hover:underline">Edit</button>
+                                        )}
+                                    </div>
+                                    {!editingOwner ? (
+                                        <div className="grid grid-cols-3 gap-4 text-sm">
+                                            <div><span className="text-gray-500">Name</span><p className="font-medium">{apt.owner_name || '—'}</p></div>
+                                            <div><span className="text-gray-500">Phone</span><p className="font-medium">{apt.owner_phone || '—'}</p></div>
+                                            <div><span className="text-gray-500">Email</span><p className="font-medium">{apt.owner_email || '—'}</p></div>
+                                        </div>
+                                    ) : (
+                                        <div className="space-y-3">
+                                            <div className="grid grid-cols-3 gap-3">
+                                                <input value={ownerForm.owner_name} onChange={e => setOwnerForm({...ownerForm, owner_name: e.target.value})}
+                                                    className="px-3 py-2 border rounded-lg text-sm" placeholder="Owner Name" />
+                                                <input value={ownerForm.owner_phone} onChange={e => setOwnerForm({...ownerForm, owner_phone: e.target.value})}
+                                                    className="px-3 py-2 border rounded-lg text-sm" placeholder="Phone" />
+                                                <input value={ownerForm.owner_email} onChange={e => setOwnerForm({...ownerForm, owner_email: e.target.value})}
+                                                    className="px-3 py-2 border rounded-lg text-sm" placeholder="Email" />
+                                            </div>
+                                            <div className="flex gap-2">
+                                                <button onClick={saveOwner} className="px-4 py-1.5 bg-green-500 text-white rounded-lg text-sm">Save</button>
+                                                <button onClick={() => setEditingOwner(false)} className="px-4 py-1.5 bg-gray-200 text-gray-700 rounded-lg text-sm">Cancel</button>
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+
+                                {/* Tabs */}
+                                <div className="flex gap-1 border-b mb-6">
+                                    {['requests', 'quotations', 'payments', 'stages', 'invoices'].map(tab => (
+                                        <button key={tab} onClick={() => setActiveTab(tab)}
+                                            className={`px-4 py-2 text-sm font-medium rounded-t-lg transition ${activeTab === tab
+                                                ? 'border-b-2 text-white'
+                                                : 'text-gray-500 hover:text-gray-700'}`}
+                                            style={{
+                                                borderBottomColor: activeTab === tab ? 'var(--primary)' : 'transparent',
+                                                color: activeTab === tab ? 'var(--primary)' : undefined
+                                            }}>
+                                            {tab.charAt(0).toUpperCase() + tab.slice(1)}
+                                            {tab === 'requests' && apt.requests?.length > 0 && (
+                                                <span className="ml-1 bg-gray-200 text-gray-600 text-xs px-1.5 rounded-full">{apt.requests.length}</span>
+                                            )}
+                                        </button>
+                                    ))}
+                                </div>
+
+                                {/* Tab Content */}
+                                {activeTab === 'requests' && (
+                                    <RequestsTab requests={apt.requests || []} apartmentId={apartmentId} auth={auth} onRefresh={doRefresh} />
+                                )}
+                                {activeTab === 'quotations' && (
+                                    <QuotationsTab quotations={apt.quotations || []} apartmentId={apartmentId} auth={auth} onRefresh={doRefresh} />
+                                )}
+                                {activeTab === 'payments' && (
+                                    <PaymentsTab payments={apt.payments || []} auth={auth} onRefresh={doRefresh} />
+                                )}
+                                {activeTab === 'stages' && (
+                                    <StagesTab stages={apt.stages || []} auth={auth} onRefresh={doRefresh} />
+                                )}
+                                {activeTab === 'invoices' && (
+                                    <InvoicesTab invoices={apt.invoices || []} auth={auth} />
+                                )}
+                            </div>
+                        )}
+
+                        {toast && <Toast {...toast} onClose={() => setToast(null)} />}
+                    </div>
+                </div>
+            );
+        };
+
+        // ============= REQUESTS TAB =============
+        const RequestsTab = ({ requests, apartmentId, auth, onRefresh }) => {
+            const [showLog, setShowLog] = useState(false);
+            const [reviewingId, setReviewingId] = useState(null);
+            const [decision, setDecision] = useState('viable');
+            const [reason, setReason] = useState('');
+            const [toast, setToast] = useState(null);
+
+            const submitReview = async () => {
+                try {
+                    await api('POST', `/api/requests/${reviewingId}/review`, { decision, reason }, auth);
+                    setReviewingId(null);
+                    setReason('');
+                    onRefresh();
+                    setToast({ message: 'Review submitted' });
+                } catch (err) {
+                    setToast({ message: err.message, type: 'error' });
+                }
+            };
+
+            return (
+                <div>
+                    <div className="flex justify-between items-center mb-4">
+                        <h3 className="font-semibold text-gray-700">Customisation Requests ({requests.length})</h3>
+                        {auth.user.role === 'sreedhanya_staff' && (
+                            <button onClick={() => setShowLog(true)} className="px-4 py-2 rounded-lg text-sm primary-btn">
+                                + Log Request
+                            </button>
+                        )}
+                    </div>
+
+                    {requests.length === 0 ? (
+                        <p className="text-gray-400 text-sm">No requests logged yet.</p>
+                    ) : (
+                        <div className="space-y-3">
+                            {requests.map(r => (
+                                <div key={r.id} className="bg-gray-50 rounded-lg p-4 border-l-4" style={{ borderLeftColor: 'var(--accent)' }}>
+                                    <div className="flex justify-between items-start">
+                                        <div>
+                                            <p className="font-semibold text-gray-800">{r.catalogue_item_name || r.custom_item_name || 'Custom Request'}</p>
+                                            <p className="text-xs text-gray-500 mt-0.5">Room: {r.room} · By: {r.created_by_name}</p>
+                                            {r.description && <p className="text-xs text-gray-500 mt-1">{r.description}</p>}
+                                            {r.review_decision && (
+                                                <p className="text-xs text-gray-500 mt-1">
+                                                    Review: <span className={r.review_decision === 'viable' ? 'text-green-600' : 'text-red-600'}>
+                                                        {r.review_decision} by {r.reviewed_by_name}
+                                                    </span>
+                                                    {r.review_reason && ` — ${r.review_reason}`}
+                                                </p>
+                                            )}
+                                        </div>
+                                        <StatusBadge status={r.status} />
+                                    </div>
+                                    {r.status === 'pending_review' && auth.user.role === 'abc_staff' && (
+                                        <button onClick={() => { setReviewingId(r.id); setDecision('viable'); setReason(''); }}
+                                            className="mt-2 px-3 py-1 text-xs rounded-lg accent-btn">
+                                            Review
+                                        </button>
+                                    )}
+                                </div>
+                            ))}
+                        </div>
+                    )}
+
+                    {reviewingId && (
+                        <div className="mt-4 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
+                            <h4 className="font-semibold mb-3 text-sm">Submit Review</h4>
+                            <div className="space-y-3">
+                                <select value={decision} onChange={e => setDecision(e.target.value)}
+                                    className="w-full px-3 py-2 border rounded-lg text-sm">
+                                    <option value="viable">Mark Viable ✓</option>
+                                    <option value="not_viable">Mark Not Viable ✗</option>
+                                </select>
+                                {decision === 'not_viable' && (
+                                    <input value={reason} onChange={e => setReason(e.target.value)}
+                                        className="w-full px-3 py-2 border rounded-lg text-sm" placeholder="Reason (required)" />
+                                )}
+                                <div className="flex gap-2">
+                                    <button onClick={submitReview} className="px-4 py-2 bg-green-500 text-white rounded-lg text-sm">Submit</button>
+                                    <button onClick={() => setReviewingId(null)} className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg text-sm">Cancel</button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {showLog && (
+                        <LogRequestForm apartmentId={apartmentId} auth={auth}
+                            onClose={() => setShowLog(false)}
+                            onSuccess={() => { setShowLog(false); onRefresh(); }} />
+                    )}
+                    {toast && <Toast {...toast} onClose={() => setToast(null)} />}
+                </div>
+            );
+        };
+
+        // ============= QUOTATIONS TAB =============
+        const QuotationsTab = ({ quotations, apartmentId, auth, onRefresh }) => {
+            const [showBuilder, setShowBuilder] = useState(false);
+            const [viewingQuote, setViewingQuote] = useState(null);
+            const [recordingFor, setRecordingFor] = useState(null);
+            const [clientResponse, setClientResponse] = useState('confirmed');
+            const [dropReason, setDropReason] = useState('');
+            const [toast, setToast] = useState(null);
+            const [generatingPdfFor, setGeneratingPdfFor] = useState(null);
+
+            const markSent = async (quoteId) => {
+                try {
+                    await api('PATCH', `/api/quotations/${quoteId}/status`, { status: 'sent' }, auth);
+                    onRefresh();
+                    setToast({ message: 'Quote marked as sent' });
+                } catch (err) {
+                    setToast({ message: err.message, type: 'error' });
+                }
+            };
+
+            const generatePdf = async (quoteId) => {
+                setGeneratingPdfFor(quoteId);
+                try {
+                    await api('POST', `/api/quotations/${quoteId}/pdf`, {}, auth);
+                    setToast({ message: 'PDF generated — downloading...' });
+                    onRefresh();
+                    setTimeout(() => downloadPdf(`/api/quotations/${quoteId}/pdf-download`, `quotation_${quoteId}.pdf`, auth), 600);
+                } catch (err) {
+                    setToast({ message: err.message, type: 'error' });
+                } finally {
+                    setGeneratingPdfFor(null);
+                }
+            };
+
+            const submitResponse = async () => {
+                try {
+                    await api('PATCH', `/api/quotations/${recordingFor}/status`,
+                        { status: clientResponse, drop_reason: dropReason }, auth);
+                    setRecordingFor(null);
+                    setDropReason('');
+                    onRefresh();
+                    setToast({ message: `Quote marked as ${clientResponse}` });
+                } catch (err) {
+                    setToast({ message: err.message, type: 'error' });
+                }
+            };
+
+            return (
+                <div>
+                    <div className="flex justify-between items-center mb-4">
+                        <h3 className="font-semibold text-gray-700">Quotations ({quotations.length})</h3>
+                        {auth.user.role === 'abc_staff' && (
+                            <button onClick={() => setShowBuilder(true)} className="px-4 py-2 rounded-lg text-sm primary-btn">
+                                + Build Quote
+                            </button>
+                        )}
+                    </div>
+
+                    {quotations.length === 0 ? (
+                        <p className="text-gray-400 text-sm">No quotations yet.</p>
+                    ) : (
+                        <div className="space-y-3">
+                            {quotations.map(q => (
+                                <div key={q.id} className="bg-gray-50 rounded-lg p-4">
+                                    <div className="flex justify-between items-start mb-2">
+                                        <div>
+                                            <p className="font-semibold text-gray-800">Quote v{q.version}</p>
+                                            <p className="text-sm text-gray-600">₹{(q.total_amount || 0).toLocaleString('en-IN')}</p>
+                                            <p className="text-xs text-gray-400">{new Date(q.generated_at).toLocaleDateString('en-IN')}</p>
+                                        </div>
+                                        <StatusBadge status={q.status} />
+                                    </div>
+                                    <div className="flex flex-wrap gap-2 mt-3">
+                                        <button onClick={() => setViewingQuote(q)}
+                                            className="px-3 py-1.5 text-xs rounded-lg accent-btn">
+                                            View Items
+                                        </button>
+                                        {/* Download PDF — show whenever a PDF exists */}
+                                        {q.pdf_path && (
+                                            <button onClick={() => downloadPdf(`/api/quotations/${q.id}/pdf-download`, `quotation_${q.id}.pdf`, auth)}
+                                                className="px-3 py-1.5 text-xs rounded-lg bg-green-500 text-white">
+                                                ⬇ Download PDF
+                                            </button>
+                                        )}
+                                        {/* Draft actions */}
+                                        {auth.user.role === 'abc_staff' && q.status === 'draft' && (
+                                            <>
+                                                {!q.pdf_path && (
+                                                    <button onClick={() => generatePdf(q.id)}
+                                                        disabled={generatingPdfFor === q.id}
+                                                        className="px-3 py-1.5 text-xs rounded-lg bg-indigo-500 text-white disabled:opacity-50">
+                                                        {generatingPdfFor === q.id ? 'Generating...' : '📄 Generate PDF'}
+                                                    </button>
+                                                )}
+                                                <button onClick={() => markSent(q.id)}
+                                                    className="px-3 py-1.5 text-xs rounded-lg bg-blue-500 text-white">
+                                                    Mark as Sent
+                                                </button>
+                                            </>
+                                        )}
+                                        {/* Sent actions */}
+                                        {q.status === 'sent' && auth.user.role === 'abc_staff' && (
+                                            <button onClick={() => { setRecordingFor(q.id); setClientResponse('confirmed'); setDropReason(''); }}
+                                                className="px-3 py-1.5 text-xs rounded-lg bg-purple-500 text-white">
+                                                Record Client Response
+                                            </button>
+                                        )}
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+
+                    {recordingFor && (
+                        <div className="mt-4 p-4 bg-purple-50 border border-purple-200 rounded-lg">
+                            <h4 className="font-semibold mb-3 text-sm">Record Client Response</h4>
+                            <div className="space-y-3">
+                                <select value={clientResponse} onChange={e => setClientResponse(e.target.value)}
+                                    className="w-full px-3 py-2 border rounded-lg text-sm">
+                                    <option value="confirmed">Confirmed ✓</option>
+                                    <option value="dropped">Dropped ✗</option>
+                                </select>
+                                {clientResponse === 'dropped' && (
+                                    <input value={dropReason} onChange={e => setDropReason(e.target.value)}
+                                        className="w-full px-3 py-2 border rounded-lg text-sm" placeholder="Reason for dropping (required)" />
+                                )}
+                                <div className="flex gap-2">
+                                    <button onClick={submitResponse} className="px-4 py-2 bg-green-500 text-white rounded-lg text-sm">Save</button>
+                                    <button onClick={() => setRecordingFor(null)} className="px-4 py-2 bg-gray-200 rounded-lg text-sm">Cancel</button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {viewingQuote && (
+                        <QuoteDetailModal quote={viewingQuote} auth={auth} onClose={() => setViewingQuote(null)} />
+                    )}
+                    {showBuilder && (
+                        <QuoteBuilderForm apartmentId={apartmentId} auth={auth}
+                            onClose={() => setShowBuilder(false)}
+                            onSuccess={() => { setShowBuilder(false); onRefresh(); }} />
+                    )}
+                    {toast && <Toast {...toast} onClose={() => setToast(null)} />}
+                </div>
+            );
+        };
+
+        // ============= PAYMENTS TAB =============
+        const milestoneLabel = {
+            advance: '50% Advance',
+            on_delivery: '30% On Delivery',
+            on_commissioning: '20% On Commissioning'
+        };
+
+        const PaymentsTab = ({ payments, auth, onRefresh }) => {
+            const [toast, setToast] = useState(null);
+
+            const markReceived = async (id) => {
+                try {
+                    await api('PATCH', `/api/payments/${id}/received`, {}, auth);
+                    onRefresh();
+                    setToast({ message: 'Payment marked as received' });
+                } catch (err) {
+                    setToast({ message: err.message, type: 'error' });
+                }
+            };
+
+            const generateInvoice = async (id) => {
+                try {
+                    const result = await api('POST', `/api/payments/${id}/invoice`, {}, auth);
+                    onRefresh();
+                    setToast({ message: `Invoice ${result.invoice_number} generated` });
+                } catch (err) {
+                    setToast({ message: err.message, type: 'error' });
+                }
+            };
+
+            return (
+                <div>
+                    <h3 className="font-semibold text-gray-700 mb-4">Payment Milestones ({payments.length})</h3>
+                    {payments.length === 0 ? (
+                        <p className="text-gray-400 text-sm">No payment milestones configured. Generate a quote first.</p>
+                    ) : (
+                        <div className="space-y-3">
+                            {payments.map(p => (
+                                <div key={p.id} className="bg-gray-50 rounded-lg p-4 border-l-4" style={{ borderLeftColor: 'var(--accent)' }}>
+                                    <div className="flex justify-between items-start mb-2">
+                                        <div>
+                                            <p className="font-semibold text-gray-800">{milestoneLabel[p.stage] || p.stage}</p>
+                                            <p className="text-gray-600 text-sm">₹{(p.amount || 0).toLocaleString('en-IN')}</p>
+                                            {p.received_at && <p className="text-xs text-gray-400">Received: {new Date(p.received_at).toLocaleDateString('en-IN')}</p>}
+                                        </div>
+                                        <StatusBadge status={p.status} />
+                                    </div>
+                                    {auth.user.role === 'abc_staff' && (p.status === 'pending' || p.status === 'received') && (
+                                        <div className="flex gap-2 mt-3">
+                                            {p.status === 'pending' && (
+                                                <button onClick={() => markReceived(p.id)}
+                                                    className="px-3 py-1.5 text-xs rounded-lg bg-green-500 text-white">
+                                                    Mark Received
+                                                </button>
+                                            )}
+                                            {!p.invoice_id && (
+                                                <button onClick={() => generateInvoice(p.id)}
+                                                    className="px-3 py-1.5 text-xs rounded-lg bg-blue-500 text-white">
+                                                    Generate Invoice
+                                                </button>
+                                            )}
+                                            {p.invoice_id && (
+                                                <span className="text-xs text-green-600 font-medium px-2 py-1">✓ Invoice generated</span>
+                                            )}
+                                        </div>
+                                    )}
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                    {toast && <Toast {...toast} onClose={() => setToast(null)} />}
+                </div>
+            );
+        };
+
+        // ============= STAGES TAB =============
+        const StagesTab = ({ stages, auth, onRefresh }) => {
+            const [toast, setToast] = useState(null);
+
+            const updateStage = async (id, status) => {
+                try {
+                    await api('PATCH', `/api/stages/${id}`, { status }, auth);
+                    onRefresh();
+                    setToast({ message: `Stage marked as ${status}` });
+                } catch (err) {
+                    setToast({ message: err.message, type: 'error' });
+                }
+            };
+
+            const statusIcon = { pending: '⏳', in_progress: '🔨', completed: '✅' };
+
+            return (
+                <div>
+                    <h3 className="font-semibold text-gray-700 mb-4">Project Stages</h3>
+                    {stages.length === 0 ? (
+                        <p className="text-gray-400 text-sm">No project stages yet. Confirm a quotation first.</p>
+                    ) : (
+                        <div className="space-y-3">
+                            {stages.map((s, idx) => (
+                                <div key={s.id} className="bg-gray-50 rounded-lg p-4 border-l-4" style={{ borderLeftColor: 'var(--accent)' }}>
+                                    <div className="flex justify-between items-start mb-1">
+                                        <div>
+                                            <p className="font-semibold text-gray-800">
+                                                {statusIcon[s.status] || ''} {s.stage_number}. {s.stage_name}
+                                            </p>
+                                            {s.notes && <p className="text-xs text-gray-500 mt-1">{s.notes}</p>}
+                                            {s.completed_at && <p className="text-xs text-gray-400">Completed: {new Date(s.completed_at).toLocaleDateString('en-IN')}</p>}
+                                        </div>
+                                        <StatusBadge status={s.status} />
+                                    </div>
+                                    {auth.user.role === 'abc_staff' && s.status !== 'completed' && (
+                                        <div className="flex gap-2 mt-3">
+                                            {s.status === 'pending' && (
+                                                <button onClick={() => updateStage(s.id, 'in_progress')}
+                                                    className="px-3 py-1.5 text-xs rounded-lg bg-blue-500 text-white">
+                                                    Start
+                                                </button>
+                                            )}
+                                            {s.status === 'in_progress' && (
+                                                <button onClick={() => updateStage(s.id, 'completed')}
+                                                    className="px-3 py-1.5 text-xs rounded-lg bg-green-500 text-white">
+                                                    Mark Complete
+                                                </button>
+                                            )}
+                                        </div>
+                                    )}
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                    {toast && <Toast {...toast} onClose={() => setToast(null)} />}
+                </div>
+            );
+        };
+
+        // ============= INVOICES TAB =============
+        const InvoicesTab = ({ invoices, auth }) => {
+            const getPdfUrl = (pdfPath) => {
+                if (!pdfPath) return null;
+                const parts = pdfPath.split('/');
+                return `/api/pdfs/${parts[parts.length - 1]}`;
+            };
+
+            return (
+                <div>
+                    <h3 className="font-semibold text-gray-700 mb-4">Invoices ({invoices.length})</h3>
+                    {invoices.length === 0 ? (
+                        <p className="text-gray-400 text-sm">No invoices generated yet.</p>
+                    ) : (
+                        <div className="space-y-3">
+                            {invoices.map(inv => (
+                                <div key={inv.id} className="bg-gray-50 rounded-lg p-4 flex justify-between items-center">
+                                    <div>
+                                        <p className="font-semibold text-gray-800">{inv.invoice_number}</p>
+                                        <p className="text-gray-600 text-sm">₹{(inv.amount || 0).toLocaleString('en-IN')}</p>
+                                        <p className="text-xs text-gray-400">{new Date(inv.generated_at).toLocaleDateString('en-IN')}</p>
+                                    </div>
+                                    {inv.pdf_path && (
+                                        <button onClick={() => downloadPdf(getPdfUrl(inv.pdf_path), `${inv.invoice_number}.pdf`, auth)}
+                                            className="px-3 py-1.5 text-xs rounded-lg bg-blue-500 text-white">
+                                            ⬇ Download
+                                        </button>
+                                    )}
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        // ============= LOG REQUEST FORM =============
+        const LogRequestForm = ({ apartmentId, auth, onClose, onSuccess }) => {
+            const [step, setStep] = useState(1);
+            const [room, setRoom] = useState('');
+            const [catalogue, setCatalogue] = useState([]);
+            const [selected, setSelected] = useState([]);
+            const [search, setSearch] = useState('');
+            const [notes, setNotes] = useState('');
+            const [loading, setLoading] = useState(false);
+            const [catLoading, setCatLoading] = useState(true);
+            const [toast, setToast] = useState(null);
+
+            useEffect(() => {
+                api('GET', '/api/catalogue', null, auth)
+                    .then(data => setCatalogue(Array.isArray(data) ? data.filter(i => i.is_active) : []))
+                    .catch(() => {})
+                    .finally(() => setCatLoading(false));
+            }, []);
+
+            const toggle = (item) => {
+                const exists = selected.find(s => s.id === item.id);
+                if (exists) setSelected(selected.filter(s => s.id !== item.id));
+                else setSelected([...selected, item]);
+            };
+
+            const handleSubmit = async () => {
+                setLoading(true);
+                try {
+                    await api('POST', '/api/requests', {
+                        apartment_id: apartmentId,
+                        items: selected.map(item => ({
+                            room,
+                            catalogue_item_id: item.id,
+                            custom_item_name: '',
+                            description: notes
+                        }))
+                    }, auth);
+                    onSuccess();
+                } catch (err) {
+                    setToast({ message: err.message, type: 'error' });
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            const filtered = catalogue.filter(i =>
+                i.item_name.toLowerCase().includes(search.toLowerCase())
+            );
+
+            const rooms = ['Living Room', 'Master Bedroom', 'Bedroom 2', 'Bedroom 3', 'Kitchen', 'Dining Area', 'Bathroom', 'Balcony', 'Utility', 'Entire Apartment'];
+
+            return (
+                <Modal isOpen={true} onClose={onClose} title="Log New Request">
+                    {step === 1 && (
+                        <div className="space-y-4">
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-2">Select Room / Area</label>
+                                <div className="grid grid-cols-2 gap-2">
+                                    {rooms.map(r => (
+                                        <button key={r} onClick={() => setRoom(r)}
+                                            className={`px-3 py-2 rounded-lg text-sm border transition ${room === r ? 'border-blue-500 bg-blue-50 text-blue-700 font-medium' : 'border-gray-200 hover:border-gray-300'}`}>
+                                            {r}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                            <button onClick={() => room && setStep(2)} disabled={!room}
+                                className="w-full py-2 rounded-lg primary-btn disabled:opacity-50 text-sm">
+                                Next →
+                            </button>
+                        </div>
+                    )}
+
+                    {step === 2 && (
+                        <div className="space-y-4">
+                            <p className="text-sm text-gray-500">Room: <strong>{room}</strong></p>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-2">Select Items from Catalogue</label>
+                                <input value={search} onChange={e => setSearch(e.target.value)}
+                                    className="w-full px-3 py-2 border rounded-lg text-sm mb-2" placeholder="Search catalogue..." />
+                                {catLoading ? <p className="text-gray-400 text-sm">Loading catalogue...</p> : (
+                                    <div className="max-h-64 overflow-y-auto border rounded-lg divide-y">
+                                        {filtered.map(item => {
+                                            const isSelected = selected.find(s => s.id === item.id);
+                                            return (
+                                                <button key={item.id} onClick={() => toggle(item)}
+                                                    className={`w-full text-left px-4 py-3 hover:bg-gray-50 transition flex items-start gap-3 ${isSelected ? 'bg-blue-50' : ''}`}>
+                                                    <span className={`mt-0.5 w-4 h-4 rounded border flex-shrink-0 flex items-center justify-center text-xs ${isSelected ? 'bg-blue-500 border-blue-500 text-white' : 'border-gray-300'}`}>
+                                                        {isSelected ? '✓' : ''}
+                                                    </span>
+                                                    <div>
+                                                        <p className="text-sm font-medium text-gray-800">{item.item_name}</p>
+                                                        <p className="text-xs text-gray-500">{item.description}</p>
+                                                    </div>
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                )}
+                            </div>
+                            {selected.length > 0 && (
+                                <div className="bg-blue-50 p-3 rounded-lg">
+                                    <p className="text-xs text-blue-600 font-medium mb-1">{selected.length} item(s) selected:</p>
+                                    <p className="text-xs text-blue-700">{selected.map(s => s.item_name).join(', ')}</p>
+                                </div>
+                            )}
+                            <div className="flex gap-2">
+                                <button onClick={() => setStep(1)} className="flex-1 py-2 rounded-lg bg-gray-200 text-gray-700 text-sm">← Back</button>
+                                <button onClick={() => selected.length > 0 && setStep(3)} disabled={selected.length === 0}
+                                    className="flex-1 py-2 rounded-lg primary-btn disabled:opacity-50 text-sm">Next →</button>
+                            </div>
+                        </div>
+                    )}
+
+                    {step === 3 && (
+                        <div className="space-y-4">
+                            <div className="bg-gray-50 p-4 rounded-lg text-sm space-y-1">
+                                <p><strong>Room:</strong> {room}</p>
+                                <p><strong>Items ({selected.length}):</strong> {selected.map(s => s.item_name).join(', ')}</p>
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Notes / Description (optional)</label>
+                                <textarea value={notes} onChange={e => setNotes(e.target.value)}
+                                    className="w-full px-3 py-2 border rounded-lg text-sm h-24"
+                                    placeholder="Any specific requirements, dimensions, preferences..." />
+                            </div>
+                            <div className="flex gap-2">
+                                <button onClick={() => setStep(2)} className="flex-1 py-2 rounded-lg bg-gray-200 text-gray-700 text-sm">← Back</button>
+                                <button onClick={handleSubmit} disabled={loading}
+                                    className="flex-1 py-2 rounded-lg primary-btn disabled:opacity-50 text-sm">
+                                    {loading ? 'Submitting...' : 'Submit Request'}
+                                </button>
+                            </div>
+                        </div>
+                    )}
+                    {toast && <Toast {...toast} onClose={() => setToast(null)} />}
+                </Modal>
+            );
+        };
+
+        // ============= QUOTE BUILDER =============
+        const QuoteBuilderForm = ({ apartmentId, auth, onClose, onSuccess }) => {
+            const [items, setItems] = useState([]);
+            const [catalogue, setCatalogue] = useState([]);
+            const [notes, setNotes] = useState('');
+            const [loading, setLoading] = useState(false);
+            const [showCat, setShowCat] = useState(false);
+            const [catSearch, setCatSearch] = useState('');
+            const [toast, setToast] = useState(null);
+
+            useEffect(() => {
+                api('GET', '/api/catalogue', null, auth)
+                    .then(data => setCatalogue(Array.isArray(data) ? data : []))
+                    .catch(() => {});
+            }, []);
+
+            const addFromCatalogue = (catItem) => {
+                setItems([...items, {
+                    id: Date.now(),
+                    item_name: catItem.item_name,
+                    room: '',
+                    description: catItem.description || '',
+                    unit: catItem.default_unit || 'per unit',
+                    quantity: 1,
+                    unit_price: catItem.default_unit_price || 0,
+                    labour_included: catItem.labour_included === 1,
+                }]);
+                setShowCat(false);
+                setCatSearch('');
+            };
+
+            const addBlankRow = () => {
+                setItems([...items, {
+                    id: Date.now(), item_name: '', room: '', description: '',
+                    unit: 'per unit', quantity: 1, unit_price: 0, labour_included: false
+                }]);
+            };
+
+            const update = (id, field, value) => {
+                setItems(items.map(i => i.id === id ? { ...i, [field]: value } : i));
+            };
+
+            const remove = (id) => setItems(items.filter(i => i.id !== id));
+
+            const total = items.reduce((sum, i) => sum + (parseFloat(i.quantity) || 0) * (parseFloat(i.unit_price) || 0), 0);
+
+            const generate = async () => {
+                if (items.length === 0) return;
+                setLoading(true);
+                try {
+                    await api('POST', '/api/quotations', {
+                        apartment_id: apartmentId,
+                        notes,
+                        items: items.map(i => ({
+                            item_name: i.item_name,
+                            room: i.room,
+                            description: i.description,
+                            unit: i.unit,
+                            quantity: parseFloat(i.quantity) || 1,
+                            unit_price: parseFloat(i.unit_price) || 0,
+                            labour_included: i.labour_included,
+                        }))
+                    }, auth);
+                    onSuccess();
+                } catch (err) {
+                    setToast({ message: err.message, type: 'error' });
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            const filteredCat = catalogue.filter(i => i.item_name.toLowerCase().includes(catSearch.toLowerCase()));
+
+            return (
+                <Modal isOpen={true} onClose={onClose} title="Build Quotation" wide={true}>
+                    <div className="space-y-4">
+                        <div className="flex gap-2 mb-2">
+                            <button onClick={() => setShowCat(!showCat)} className="px-4 py-2 text-sm accent-btn rounded-lg">
+                                + From Catalogue
+                            </button>
+                            <button onClick={addBlankRow} className="px-4 py-2 text-sm bg-gray-200 text-gray-700 rounded-lg">
+                                + Blank Row
+                            </button>
+                        </div>
+
+                        {showCat && (
+                            <div className="border rounded-lg p-3 bg-gray-50">
+                                <input value={catSearch} onChange={e => setCatSearch(e.target.value)}
+                                    className="w-full px-3 py-2 border rounded-lg text-sm mb-2" placeholder="Search catalogue..." />
+                                <div className="max-h-48 overflow-y-auto space-y-1">
+                                    {filteredCat.map(item => (
+                                        <button key={item.id} onClick={() => addFromCatalogue(item)}
+                                            className="w-full text-left px-3 py-2 hover:bg-white rounded-lg text-sm border border-transparent hover:border-gray-200 transition">
+                                            <span className="font-medium">{item.item_name}</span>
+                                            <span className="text-gray-500 ml-2 text-xs">
+                                                {item.default_unit} · ₹{item.default_unit_price || 'TBD'}
+                                            </span>
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+
+                        {items.length > 0 && (
+                            <div className="overflow-x-auto">
+                                <table className="w-full text-sm border-collapse">
+                                    <thead>
+                                        <tr className="bg-gray-100">
+                                            <th className="px-2 py-2 text-left text-xs">Item Description</th>
+                                            <th className="px-2 py-2 text-left text-xs w-24">Room</th>
+                                            <th className="px-2 py-2 text-center text-xs w-16">Qty</th>
+                                            <th className="px-2 py-2 text-left text-xs w-24">Unit</th>
+                                            <th className="px-2 py-2 text-right text-xs w-28">Unit Price (₹)</th>
+                                            <th className="px-2 py-2 text-center text-xs w-16">Labour ✓</th>
+                                            <th className="px-2 py-2 text-right text-xs w-28">Line Total</th>
+                                            <th className="px-2 py-2 w-8"></th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {items.map(item => {
+                                            const lineTotal = (parseFloat(item.quantity) || 0) * (parseFloat(item.unit_price) || 0);
+                                            return (
+                                                <tr key={item.id} className="border-b hover:bg-gray-50">
+                                                    <td className="px-2 py-1.5">
+                                                        <input value={item.item_name} onChange={e => update(item.id, 'item_name', e.target.value)}
+                                                            className="w-full px-2 py-1 border rounded text-xs" placeholder="Item name" />
+                                                    </td>
+                                                    <td className="px-2 py-1.5">
+                                                        <input value={item.room} onChange={e => update(item.id, 'room', e.target.value)}
+                                                            className="w-full px-2 py-1 border rounded text-xs" placeholder="Room" />
+                                                    </td>
+                                                    <td className="px-2 py-1.5">
+                                                        <input type="number" value={item.quantity} onChange={e => update(item.id, 'quantity', e.target.value)}
+                                                            className="w-full px-2 py-1 border rounded text-xs text-center" min="0.01" step="0.01" />
+                                                    </td>
+                                                    <td className="px-2 py-1.5">
+                                                        <input value={item.unit} onChange={e => update(item.id, 'unit', e.target.value)}
+                                                            className="w-full px-2 py-1 border rounded text-xs" placeholder="unit" />
+                                                    </td>
+                                                    <td className="px-2 py-1.5">
+                                                        <input type="number" value={item.unit_price} onChange={e => update(item.id, 'unit_price', e.target.value)}
+                                                            className="w-full px-2 py-1 border rounded text-xs text-right" min="0" />
+                                                    </td>
+                                                    <td className="px-2 py-1.5 text-center">
+                                                        <input type="checkbox" checked={item.labour_included}
+                                                            onChange={e => update(item.id, 'labour_included', e.target.checked)} />
+                                                    </td>
+                                                    <td className="px-2 py-1.5 text-right font-semibold text-sm">
+                                                        ₹{lineTotal.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+                                                    </td>
+                                                    <td className="px-2 py-1.5">
+                                                        <button onClick={() => remove(item.id)} className="text-red-400 hover:text-red-600 font-bold text-lg leading-none">×</button>
+                                                    </td>
+                                                </tr>
+                                            );
+                                        })}
+                                    </tbody>
+                                </table>
+                            </div>
+                        )}
+
+                        {items.length === 0 && (
+                            <p className="text-gray-400 text-sm text-center py-8">No line items yet. Add from catalogue or add a blank row.</p>
+                        )}
+
+                        <div className="flex justify-end">
+                            <div className="bg-gray-50 px-6 py-3 rounded-lg">
+                                <span className="text-gray-600 mr-4">Grand Total:</span>
+                                <span className="text-2xl font-bold" style={{ color: 'var(--primary)' }}>
+                                    ₹{total.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+                                </span>
+                            </div>
+                        </div>
+
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Notes</label>
+                            <textarea value={notes} onChange={e => setNotes(e.target.value)}
+                                className="w-full px-3 py-2 border rounded-lg text-sm h-16" placeholder="Any additional notes..." />
+                        </div>
+
+                        <div className="flex gap-2">
+                            <button onClick={generate} disabled={items.length === 0 || loading}
+                                className="flex-1 py-2.5 rounded-lg primary-btn disabled:opacity-50 text-sm font-medium">
+                                {loading ? 'Generating...' : '📄 Generate Quotation'}
+                            </button>
+                            <button onClick={onClose} className="flex-1 py-2.5 rounded-lg bg-gray-200 text-gray-700 text-sm">Cancel</button>
+                        </div>
+                    </div>
+                    {toast && <Toast {...toast} onClose={() => setToast(null)} />}
+                </Modal>
+            );
+        };
+
+        // ============= QUOTE DETAIL MODAL =============
+        const QuoteDetailModal = ({ quote, auth, onClose }) => {
+            const [detail, setDetail] = useState(null);
+            const [loading, setLoading] = useState(true);
+
+            useEffect(() => {
+                api('GET', `/api/quotations/${quote.id}`, null, auth)
+                    .then(data => setDetail(data))
+                    .catch(() => {})
+                    .finally(() => setLoading(false));
+            }, [quote.id]);
+
+            return (
+                <Modal isOpen={true} onClose={onClose} title={`Quote v${quote.version} — ₹${(quote.total_amount || 0).toLocaleString('en-IN')}`} wide={true}>
+                    {loading ? <p className="text-gray-400">Loading...</p> : detail && (
+                        <div>
+                            <div className="overflow-x-auto mb-4">
+                                <table className="w-full text-sm border-collapse">
+                                    <thead className="bg-gray-100">
+                                        <tr>
+                                            <th className="px-3 py-2 text-left">Item</th>
+                                            <th className="px-3 py-2 text-left">Room</th>
+                                            <th className="px-3 py-2 text-center">Qty</th>
+                                            <th className="px-3 py-2 text-left">Unit</th>
+                                            <th className="px-3 py-2 text-right">Unit Price</th>
+                                            <th className="px-3 py-2 text-center">Labour</th>
+                                            <th className="px-3 py-2 text-right">Total</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {(detail.items || []).map((item, idx) => (
+                                            <tr key={idx} className="border-b hover:bg-gray-50">
+                                                <td className="px-3 py-2">{item.item_name}</td>
+                                                <td className="px-3 py-2">{item.room || '—'}</td>
+                                                <td className="px-3 py-2 text-center">{item.quantity}</td>
+                                                <td className="px-3 py-2">{item.unit}</td>
+                                                <td className="px-3 py-2 text-right">₹{(item.unit_price || 0).toLocaleString('en-IN')}</td>
+                                                <td className="px-3 py-2 text-center">{item.labour_included ? '✓' : '—'}</td>
+                                                <td className="px-3 py-2 text-right font-semibold">₹{(item.line_total || 0).toLocaleString('en-IN')}</td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                            <div className="flex justify-end">
+                                <div className="bg-gray-50 px-6 py-3 rounded-lg">
+                                    <span className="text-gray-600 mr-4">Total:</span>
+                                    <span className="text-xl font-bold" style={{ color: 'var(--primary)' }}>
+                                        ₹{(quote.total_amount || 0).toLocaleString('en-IN')}
+                                    </span>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                </Modal>
+            );
+        };
+
+        // ============= DASHBOARD PAGE =============
+        const DashboardPage = ({ auth }) => {
+            const [apartments, setApartments] = useState([]);
+            const [loading, setLoading] = useState(true);
+            const [statusFilter, setStatusFilter] = useState('');
+            const [bhkFilter, setBhkFilter] = useState('');
+            const [blockFilter, setBlockFilter] = useState('');
+            const [selectedAptId, setSelectedAptId] = useState(null);
+            const [refresh, setRefresh] = useState(0);
+
+            useEffect(() => { loadApartments(); }, [refresh]);
+
+            const loadApartments = async () => {
+                setLoading(true);
+                try {
+                    const data = await api('GET', '/api/apartments', null, auth);
+                    setApartments(Array.isArray(data) ? data : []);
+                } catch {}
+                finally { setLoading(false); }
+            };
+
+            const filtered = apartments.filter(a => {
+                if (statusFilter && a.status !== statusFilter) return false;
+                if (bhkFilter && a.bedroom_type !== bhkFilter) return false;
+                if (blockFilter && a.block !== blockFilter) return false;
+                return true;
+            });
+
+            const stats = {
+                total: apartments.length,
+                noRequest: apartments.filter(a => a.status === 'no_request').length,
+                inProgress: apartments.filter(a => a.status === 'in_progress').length,
+                completed: apartments.filter(a => a.status === 'completed').length,
+                pendingReview: apartments.reduce((s, a) => s + (a.pending_review_count || 0), 0),
+                overdue: apartments.reduce((s, a) => s + (a.overdue_payments || 0), 0),
+            };
+
+            const uniqueBhks = [...new Set(apartments.map(a => a.bedroom_type))].filter(Boolean).sort();
+            const uniqueBlocks = [...new Set(apartments.map(a => a.block))].filter(Boolean).sort();
+
+            return (
+                <div className="p-8">
+                    <h1 className="text-2xl font-bold text-gray-800 mb-6">Dashboard</h1>
+
+                    {/* Stats */}
+                    <div className="grid grid-cols-3 gap-4 mb-8">
+                        <div className="bg-white rounded-xl shadow-sm p-5">
+                            <p className="text-gray-500 text-sm mb-1">Total Apartments</p>
+                            <p className="text-3xl font-bold" style={{ color: 'var(--primary)' }}>{stats.total}</p>
+                        </div>
+                        <div className="bg-white rounded-xl shadow-sm p-5">
+                            <p className="text-gray-500 text-sm mb-1">Pending Review</p>
+                            <p className="text-3xl font-bold text-yellow-600">{stats.pendingReview}</p>
+                        </div>
+                        <div className="bg-white rounded-xl shadow-sm p-5">
+                            <p className="text-gray-500 text-sm mb-1">Completed</p>
+                            <p className="text-3xl font-bold text-green-600">{stats.completed}</p>
+                        </div>
+                    </div>
+
+                    {/* Filters */}
+                    <div className="bg-white rounded-xl shadow-sm p-4 mb-6 flex flex-wrap gap-4">
+                        <div className="flex items-center gap-2">
+                            <label className="text-sm text-gray-600">Status</label>
+                            <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
+                                className="px-3 py-1.5 border rounded-lg text-sm">
+                                <option value="">All</option>
+                                <option value="no_request">No Request</option>
+                                <option value="in_progress">In Progress</option>
+                                <option value="completed">Completed</option>
+                            </select>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <label className="text-sm text-gray-600">BHK</label>
+                            <select value={bhkFilter} onChange={e => setBhkFilter(e.target.value)}
+                                className="px-3 py-1.5 border rounded-lg text-sm">
+                                <option value="">All</option>
+                                {uniqueBhks.map(b => <option key={b} value={b}>{b}</option>)}
+                            </select>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <label className="text-sm text-gray-600">Block</label>
+                            <select value={blockFilter} onChange={e => setBlockFilter(e.target.value)}
+                                className="px-3 py-1.5 border rounded-lg text-sm">
+                                <option value="">All</option>
+                                {uniqueBlocks.map(b => <option key={b} value={b}>Block {b}</option>)}
+                            </select>
+                        </div>
+                        {(statusFilter || bhkFilter || blockFilter) && (
+                            <button onClick={() => { setStatusFilter(''); setBhkFilter(''); setBlockFilter(''); }}
+                                className="px-3 py-1.5 text-sm text-red-500 hover:underline">
+                                Clear filters
+                            </button>
+                        )}
+                        <div className="ml-auto text-sm text-gray-400">{filtered.length} shown</div>
+                    </div>
+
+                    {/* Grid */}
+                    {loading ? (
+                        <p className="text-gray-400">Loading apartments...</p>
+                    ) : (
+                        <div className="grid grid-cols-5 gap-4">
+                            {filtered.map(apt => (
+                                <ApartmentCard key={apt.id} apt={apt} onClick={() => setSelectedAptId(apt.id)} />
+                            ))}
+                            {filtered.length === 0 && (
+                                <div className="col-span-5 text-center py-12 text-gray-400">No apartments match the filters.</div>
+                            )}
+                        </div>
+                    )}
+
+                    {selectedAptId && (
+                        <ApartmentDetailModal
+                            isOpen={true}
+                            apartmentId={selectedAptId}
+                            auth={auth}
+                            onClose={() => { setSelectedAptId(null); setRefresh(r => r + 1); }}
+                        />
+                    )}
+                </div>
+            );
+        };
+
+        // ============= VIABILITY QUEUE PAGE =============
+        const ViabilityQueuePage = ({ auth }) => {
+            const [requests, setRequests] = useState([]);
+            const [loading, setLoading] = useState(true);
+            const [reviewingId, setReviewingId] = useState(null);
+            const [decision, setDecision] = useState('viable');
+            const [reason, setReason] = useState('');
+            const [toast, setToast] = useState(null);
+            const [refresh, setRefresh] = useState(0);
+
+            useEffect(() => {
+                api('GET', '/api/requests?status=pending_review', null, auth)
+                    .then(data => setRequests(Array.isArray(data) ? data : []))
+                    .catch(() => {})
+                    .finally(() => setLoading(false));
+            }, [refresh]);
+
+            const submitReview = async () => {
+                try {
+                    await api('POST', `/api/requests/${reviewingId}/review`, { decision, reason }, auth);
+                    setReviewingId(null);
+                    setReason('');
+                    setRefresh(r => r + 1);
+                    setToast({ message: 'Review submitted' });
+                } catch (err) {
+                    setToast({ message: err.message, type: 'error' });
+                }
+            };
+
+            return (
+                <div className="p-8">
+                    <h1 className="text-2xl font-bold text-gray-800 mb-2">Viability Queue</h1>
+                    <p className="text-gray-500 text-sm mb-6">All pending requests awaiting your review</p>
+
+                    {loading ? (
+                        <p className="text-gray-400">Loading...</p>
+                    ) : requests.length === 0 ? (
+                        <div className="bg-white rounded-xl shadow-sm p-12 text-center">
+                            <p className="text-4xl mb-3">✅</p>
+                            <p className="text-gray-600 font-medium">All clear! No pending reviews.</p>
+                        </div>
+                    ) : (
+                        <div className="space-y-3">
+                            {requests.map(r => (
+                                <div key={r.id} className="bg-white rounded-xl shadow-sm p-5 border-l-4" style={{ borderLeftColor: '#f59e0b' }}>
+                                    <div className="flex justify-between items-start mb-2">
+                                        <div>
+                                            <p className="font-semibold text-gray-800">
+                                                {r.catalogue_item_name || r.custom_item_name || 'Custom Request'}
+                                            </p>
+                                            <p className="text-sm text-gray-500 mt-0.5">
+                                                Apt <strong>{r.apartment_number}</strong> · {r.bedroom_type} · Room: {r.room}
+                                            </p>
+                                            <p className="text-xs text-gray-400">Logged by: {r.created_by_name} · {new Date(r.created_at).toLocaleDateString('en-IN')}</p>
+                                            {r.description && <p className="text-sm text-gray-600 mt-1">{r.description}</p>}
+                                        </div>
+                                        <StatusBadge status={r.status} />
+                                    </div>
+                                    {reviewingId !== r.id && (
+                                        <button onClick={() => { setReviewingId(r.id); setDecision('viable'); setReason(''); }}
+                                            className="px-4 py-1.5 text-sm rounded-lg accent-btn mt-2">
+                                            Review →
+                                        </button>
+                                    )}
+                                    {reviewingId === r.id && (
+                                        <div className="mt-3 p-4 bg-yellow-50 rounded-lg space-y-3">
+                                            <select value={decision} onChange={e => setDecision(e.target.value)}
+                                                className="w-full px-3 py-2 border rounded-lg text-sm">
+                                                <option value="viable">Mark Viable ✓</option>
+                                                <option value="not_viable">Mark Not Viable ✗</option>
+                                            </select>
+                                            {decision === 'not_viable' && (
+                                                <input value={reason} onChange={e => setReason(e.target.value)}
+                                                    className="w-full px-3 py-2 border rounded-lg text-sm"
+                                                    placeholder="Reason (required)" />
+                                            )}
+                                            <div className="flex gap-2">
+                                                <button onClick={submitReview} className="px-4 py-2 bg-green-500 text-white rounded-lg text-sm">Submit</button>
+                                                <button onClick={() => setReviewingId(null)} className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg text-sm">Cancel</button>
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                    {toast && <Toast {...toast} onClose={() => setToast(null)} />}
+                </div>
+            );
+        };
+
+        // ============= CATALOGUE MANAGEMENT PAGE =============
+        const CataloguePage = ({ auth }) => {
+            const [catalogue, setCatalogue] = useState([]);
+            const [loading, setLoading] = useState(true);
+            const [showForm, setShowForm] = useState(false);
+            const [editItem, setEditItem] = useState(null);
+            const [toast, setToast] = useState(null);
+            const [refresh, setRefresh] = useState(0);
+
+            useEffect(() => {
+                api('GET', '/api/catalogue?all', null, auth)
+                    .then(data => setCatalogue(Array.isArray(data) ? data : []))
+                    .catch(() => {})
+                    .finally(() => setLoading(false));
+            }, [refresh]);
+
+            const toggle = async (item) => {
+                try {
+                    await api('PATCH', `/api/catalogue/${item.id}/toggle`, {}, auth);
+                    setRefresh(r => r + 1);
+                    setToast({ message: `${item.item_name} ${item.is_active ? 'deactivated' : 'activated'}` });
+                } catch (err) {
+                    setToast({ message: err.message, type: 'error' });
+                }
+            };
+
+            return (
+                <div className="p-8">
+                    <div className="flex justify-between items-center mb-6">
+                        <div>
+                            <h1 className="text-2xl font-bold text-gray-800">Catalogue</h1>
+                            <p className="text-gray-500 text-sm">Manage customisation items available for selection</p>
+                        </div>
+                        <button onClick={() => { setEditItem(null); setShowForm(true); }}
+                            className="px-4 py-2 rounded-lg primary-btn text-sm">
+                            + Add Item
+                        </button>
+                    </div>
+
+                    {loading ? <p className="text-gray-400">Loading...</p> : (
+                        <div className="space-y-3">
+                            {catalogue.map(item => (
+                                <div key={item.id} className={`bg-white rounded-xl shadow-sm p-4 flex items-start gap-4 ${!item.is_active ? 'opacity-50' : ''}`}>
+                                    <div className="flex-1">
+                                        <div className="flex items-center gap-2 mb-1">
+                                            <p className="font-semibold text-gray-800">{item.item_name}</p>
+                                            {item.is_custom ? <span className="text-xs bg-purple-100 text-purple-600 px-2 py-0.5 rounded-full">Custom</span> : null}
+                                            {item.labour_included ? <span className="text-xs bg-blue-100 text-blue-600 px-2 py-0.5 rounded-full">Labour incl.</span> : null}
+                                        </div>
+                                        <p className="text-sm text-gray-500">{item.description}</p>
+                                        <p className="text-xs text-gray-400 mt-1">
+                                            {item.default_unit} · ₹{item.default_unit_price || 'TBD'}
+                                        </p>
+                                    </div>
+                                    <div className="flex gap-2 flex-shrink-0">
+                                        <button onClick={() => { setEditItem(item); setShowForm(true); }}
+                                            className="px-3 py-1.5 text-xs rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-700">
+                                            Edit
+                                        </button>
+                                        <button onClick={() => toggle(item)}
+                                            className={`px-3 py-1.5 text-xs rounded-lg ${item.is_active ? 'bg-red-100 text-red-600 hover:bg-red-200' : 'bg-green-100 text-green-600 hover:bg-green-200'}`}>
+                                            {item.is_active ? 'Deactivate' : 'Activate'}
+                                        </button>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+
+                    {showForm && (
+                        <CatalogueItemForm
+                            auth={auth}
+                            item={editItem}
+                            onClose={() => setShowForm(false)}
+                            onSuccess={() => { setShowForm(false); setRefresh(r => r + 1); setToast({ message: editItem ? 'Item updated' : 'Item added' }); }}
+                        />
+                    )}
+                    {toast && <Toast {...toast} onClose={() => setToast(null)} />}
+                </div>
+            );
+        };
+
+        const CatalogueItemForm = ({ auth, item, onClose, onSuccess }) => {
+            const [form, setForm] = useState({
+                item_name: item?.item_name || '',
+                description: item?.description || '',
+                key_materials: item?.key_materials || '',
+                default_unit: item?.default_unit || 'per unit',
+                default_unit_price: item?.default_unit_price || 0,
+                labour_included: item?.labour_included === 1 || false,
+                notes: item?.notes || '',
+                is_active: item ? item.is_active === 1 : true,
+            });
+            const [loading, setLoading] = useState(false);
+            const [error, setError] = useState('');
+
+            const save = async () => {
+                if (!form.item_name.trim()) { setError('Item name is required'); return; }
+                setLoading(true);
+                try {
+                    const payload = { ...form, labour_included: form.labour_included ? 1 : 0, is_active: form.is_active ? 1 : 0 };
+                    if (item) {
+                        await api('PUT', `/api/catalogue/${item.id}`, payload, auth);
+                    } else {
+                        await api('POST', '/api/catalogue', payload, auth);
+                    }
+                    onSuccess();
+                } catch (err) {
+                    setError(err.message);
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            const f = (field) => ({
+                value: form[field],
+                onChange: e => setForm({ ...form, [field]: e.target.value })
+            });
+
+            return (
+                <Modal isOpen={true} onClose={onClose} title={item ? 'Edit Catalogue Item' : 'Add Catalogue Item'}>
+                    <div className="space-y-4">
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Item Name *</label>
+                            <input {...f('item_name')} className="w-full px-3 py-2 border rounded-lg text-sm" />
+                        </div>
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+                            <textarea {...f('description')} className="w-full px-3 py-2 border rounded-lg text-sm h-20" />
+                        </div>
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Key Materials</label>
+                            <input {...f('key_materials')} className="w-full px-3 py-2 border rounded-lg text-sm" placeholder="e.g. KNX cable, WAGO connectors" />
+                        </div>
+                        <div className="grid grid-cols-2 gap-3">
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Default Unit</label>
+                                <input {...f('default_unit')} className="w-full px-3 py-2 border rounded-lg text-sm" />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Default Unit Price (₹)</label>
+                                <input type="number" {...f('default_unit_price')} className="w-full px-3 py-2 border rounded-lg text-sm" min="0" />
+                            </div>
+                        </div>
+                        <div className="flex gap-6">
+                            <label className="flex items-center gap-2 text-sm cursor-pointer">
+                                <input type="checkbox" checked={form.labour_included}
+                                    onChange={e => setForm({ ...form, labour_included: e.target.checked })} />
+                                Labour included in price
+                            </label>
+                            {item && (
+                                <label className="flex items-center gap-2 text-sm cursor-pointer">
+                                    <input type="checkbox" checked={form.is_active}
+                                        onChange={e => setForm({ ...form, is_active: e.target.checked })} />
+                                    Active (visible to staff)
+                                </label>
+                            )}
+                        </div>
+                        {error && <p className="text-red-500 text-sm">{error}</p>}
+                        <div className="flex gap-2 pt-2">
+                            <button onClick={save} disabled={loading}
+                                className="flex-1 py-2.5 rounded-lg primary-btn disabled:opacity-50 text-sm">
+                                {loading ? 'Saving...' : item ? 'Update Item' : 'Add Item'}
+                            </button>
+                            <button onClick={onClose} className="flex-1 py-2.5 rounded-lg bg-gray-200 text-gray-700 text-sm">Cancel</button>
+                        </div>
+                    </div>
+                </Modal>
+            );
+        };
+
+        // ============= USER MANAGEMENT PAGE =============
+        const UsersPage = ({ auth }) => {
+            const [users, setUsers] = useState([]);
+            const [loading, setLoading] = useState(true);
+            const [showForm, setShowForm] = useState(false);
+            const [editUser, setEditUser] = useState(null);
+            const [toast, setToast] = useState(null);
+            const [refresh, setRefresh] = useState(0);
+
+            useEffect(() => {
+                api('GET', '/api/users', null, auth)
+                    .then(data => setUsers(Array.isArray(data) ? data : []))
+                    .catch(() => {})
+                    .finally(() => setLoading(false));
+            }, [refresh]);
+
+            const roleLabel = { abc_staff: 'A+BC Staff', sreedhanya_staff: 'Sreedhanya Staff' };
+
+            return (
+                <div className="p-8">
+                    <div className="flex justify-between items-center mb-6">
+                        <div>
+                            <h1 className="text-2xl font-bold text-gray-800">Users</h1>
+                            <p className="text-gray-500 text-sm">Manage app access and roles</p>
+                        </div>
+                        <button onClick={() => { setEditUser(null); setShowForm(true); }}
+                            className="px-4 py-2 rounded-lg primary-btn text-sm">
+                            + Add User
+                        </button>
+                    </div>
+
+                    {loading ? <p className="text-gray-400">Loading...</p> : (
+                        <div className="space-y-3">
+                            {users.map(u => (
+                                <div key={u.id} className={`bg-white rounded-xl shadow-sm p-4 flex items-center gap-4 ${!u.is_active ? 'opacity-50' : ''}`}>
+                                    <div className="w-10 h-10 rounded-full flex items-center justify-center text-white font-bold flex-shrink-0"
+                                        style={{ backgroundColor: u.role === 'abc_staff' ? 'var(--primary)' : 'var(--accent)' }}>
+                                        {u.name.charAt(0).toUpperCase()}
+                                    </div>
+                                    <div className="flex-1">
+                                        <p className="font-semibold text-gray-800">{u.name}</p>
+                                        <p className="text-sm text-gray-500">{u.email}</p>
+                                        <p className="text-xs text-gray-400">{roleLabel[u.role] || u.role}</p>
+                                    </div>
+                                    <div className="flex items-center gap-3">
+                                        {!u.is_active && <span className="text-xs bg-red-100 text-red-500 px-2 py-0.5 rounded-full">Inactive</span>}
+                                        {u.last_login && <p className="text-xs text-gray-400">Last: {new Date(u.last_login).toLocaleDateString('en-IN')}</p>}
+                                        <button onClick={() => { setEditUser(u); setShowForm(true); }}
+                                            className="px-3 py-1.5 text-xs rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-700">
+                                            Edit
+                                        </button>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+
+                    {showForm && (
+                        <UserForm auth={auth} user={editUser} onClose={() => setShowForm(false)}
+                            onSuccess={() => { setShowForm(false); setRefresh(r => r + 1); setToast({ message: editUser ? 'User updated' : 'User added' }); }} />
+                    )}
+                    {toast && <Toast {...toast} onClose={() => setToast(null)} />}
+                </div>
+            );
+        };
+
+        const UserForm = ({ auth, user, onClose, onSuccess }) => {
+            const [form, setForm] = useState({
+                name: user?.name || '',
+                email: user?.email || '',
+                role: user?.role || 'sreedhanya_staff',
+                password: '',
+                is_active: user ? Boolean(user.is_active) : true,
+            });
+            const [loading, setLoading] = useState(false);
+            const [error, setError] = useState('');
+
+            const save = async () => {
+                if (!form.name.trim()) { setError('Name is required'); return; }
+                if (!user && !form.email.trim()) { setError('Email is required'); return; }
+                if (!user && !form.password) { setError('Password is required for new users'); return; }
+                setLoading(true);
+                try {
+                    if (user) {
+                        await api('PUT', `/api/users/${user.id}`, {
+                            name: form.name, role: form.role,
+                            is_active: form.is_active,
+                            ...(form.password ? { password: form.password } : {})
+                        }, auth);
+                    } else {
+                        await api('POST', '/api/users', {
+                            name: form.name, email: form.email,
+                            role: form.role, password: form.password
+                        }, auth);
+                    }
+                    onSuccess();
+                } catch (err) {
+                    setError(err.message);
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            return (
+                <Modal isOpen={true} onClose={onClose} title={user ? 'Edit User' : 'Add User'}>
+                    <div className="space-y-4">
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Name *</label>
+                            <input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })}
+                                className="w-full px-3 py-2 border rounded-lg text-sm" />
+                        </div>
+                        {!user && (
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Email *</label>
+                                <input type="email" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })}
+                                    className="w-full px-3 py-2 border rounded-lg text-sm" />
+                            </div>
+                        )}
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Role *</label>
+                            <select value={form.role} onChange={e => setForm({ ...form, role: e.target.value })}
+                                className="w-full px-3 py-2 border rounded-lg text-sm">
+                                <option value="sreedhanya_staff">Sreedhanya Staff</option>
+                                <option value="abc_staff">A+BC Staff</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">
+                                {user ? 'New Password (leave blank to keep current)' : 'Password *'}
+                            </label>
+                            <input type="password" value={form.password} onChange={e => setForm({ ...form, password: e.target.value })}
+                                className="w-full px-3 py-2 border rounded-lg text-sm" placeholder={user ? 'Leave blank to keep unchanged' : ''} />
+                        </div>
+                        {user && (
+                            <label className="flex items-center gap-2 text-sm cursor-pointer">
+                                <input type="checkbox" checked={form.is_active}
+                                    onChange={e => setForm({ ...form, is_active: e.target.checked })} />
+                                Account active
+                            </label>
+                        )}
+                        {error && <p className="text-red-500 text-sm">{error}</p>}
+                        <div className="flex gap-2 pt-2">
+                            <button onClick={save} disabled={loading}
+                                className="flex-1 py-2.5 rounded-lg primary-btn disabled:opacity-50 text-sm">
+                                {loading ? 'Saving...' : user ? 'Update User' : 'Create User'}
+                            </button>
+                            <button onClick={onClose} className="flex-1 py-2.5 rounded-lg bg-gray-200 text-gray-700 text-sm">Cancel</button>
+                        </div>
+                    </div>
+                </Modal>
+            );
+        };
+
+        // ============= MAIN APP =============
+        const AppShell = () => {
+            const { auth, loading, logout } = useAuth();
+            const [currentPage, setCurrentPage] = useState('dashboard');
+
+            if (loading) {
+                return (
+                    <div className="flex items-center justify-center min-h-screen">
+                        <p className="text-gray-400">Loading...</p>
+                    </div>
+                );
+            }
+
+            if (!auth) return <LoginPage />;
+
+            return (
+                <div className="min-h-screen flex">
+                    <Sidebar auth={auth} currentPage={currentPage} onNavigate={setCurrentPage} onLogout={logout} />
+                    <div className="flex-1 overflow-auto">
+                        {currentPage === 'dashboard' && <DashboardPage auth={auth} />}
+                        {currentPage === 'viability' && <ViabilityQueuePage auth={auth} />}
+                        {currentPage === 'catalogue' && <CataloguePage auth={auth} />}
+                        {currentPage === 'users' && <UsersPage auth={auth} />}
+                    </div>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(
+            <AuthProvider>
+                <AppShell />
+            </AuthProvider>
+        );
+    </script>
+</body>
+</html>

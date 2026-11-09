@@ -196,8 +196,11 @@ def seed_db():
         ('Geyser Automation',
          'Schedule or remotely switch on geyser before reaching home.',
          'Letour 3CH ON/OFF + 6CH Binary Input, Electric Contactor', 'per unit', 0, 0),
-        ('AC Integration',
-         'Full AC control (on/off, temperature, mode) from the automation app.',
+        ('AC ON/OFF Integration',
+         'Basic AC control — turn the AC on or off from the automation app or on a schedule.',
+         'AC Control Unit', 'per indoor unit', 0, 0),
+        ('AC Full Remote Integration',
+         'Full AC control — on/off, temperature, mode and fan speed from the automation app.',
          'AC Control Unit', 'per indoor unit', 0, 0),
         ('Door Magnetic Sensor',
          'Notification when main door or balcony door opens. Ideal for NRI clients.',
@@ -220,6 +223,9 @@ def seed_db():
         ('Customised Keypads',
          'Replace mechanical switchboards with automation keypads. Metal or glass finish.',
          'Automation Keypad (metal or glass)', 'per keypad', 0, 0),
+        ('KNX Metal Finish Keypad',
+         'Premium metal finish KNX keypad to replace standard switchboards. Sleek and durable.',
+         'KNX Metal Finish Keypad', 'per keypad', 0, 0),
         ('Multi-Room Audio System',
          'Zone-wise audio. Play same or different tracks in each room via Airplay/Spotify.',
          'Zone Amplifier, Speakers, Speaker Cabling', 'per zone', 0, 0),
@@ -241,6 +247,31 @@ def seed_db():
             (item_name, description, key_materials, default_unit, default_unit_price, labour_included)
         VALUES (?,?,?,?,?,?)
     """, catalogue)
+
+    # ── MIGRATIONS ────────────────────────────────────────────────────────
+    # Deactivate old "AC Integration" (replaced by two separate items below)
+    c.execute("""
+        UPDATE catalogue SET is_active = 0
+        WHERE item_name = 'AC Integration'
+    """)
+
+    # Insert new AC items if they don't already exist
+    for name, desc, materials in [
+        ('AC ON/OFF Integration',
+         'Basic AC control — turn the AC on or off from the automation app or on a schedule.',
+         'AC Control Unit'),
+        ('AC Full Remote Integration',
+         'Full AC control — on/off, temperature, mode and fan speed from the automation app.',
+         'AC Control Unit'),
+        ('KNX Metal Finish Keypad',
+         'Premium metal finish KNX keypad to replace standard switchboards. Sleek and durable.',
+         'KNX Metal Finish Keypad'),
+    ]:
+        c.execute("""
+            INSERT INTO catalogue (item_name, description, key_materials, default_unit, default_unit_price, labour_included)
+            SELECT ?, ?, ?, 'per unit', 0, 0
+            WHERE NOT EXISTS (SELECT 1 FROM catalogue WHERE item_name = ?)
+        """, (name, desc, materials, name))
 
     conn.commit()
     conn.close()
